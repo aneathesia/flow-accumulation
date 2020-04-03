@@ -1,0 +1,114 @@
+%% 主函数 应用入口  输入参数terrain（某一地区的地形） rain(地形研究区的降水分布) 可以直接用rain=ones(rangex,rangey)全部为1模拟
+%% 算法主要通过遍历所有格点将各格点的分流结果累加得到最终accumulation结果
+function water_accumulation=water_acc(terrain,rain)
+[rangex,rangey]=size(terrain);
+water_accumulation=zeros(rangex,rangey);
+for i=2:rangex-1
+    for j=2:rangey-1
+        point.i=i;point.j=j;point.wq=rain(i,j);
+        singlecell_acc=dir_traversal(terrain,point);
+        water_accumulation=water_accumulation+singlecell_acc;
+    end
+end
+
+%%单个位置在地形中的流水最终结果 singlecell_acc point指需要计算的格点
+%%class point{
+%%    i ,j ,wq
+%% }
+
+function   singlecell_acc=dir_traversal(terrain,point)
+%%terrain 地形 posi_i,posi_j水流的中心点 posi_i,posi_j最小从（2,2）开始
+%%switch case terrain(posi_i,posi_j)>terrain(posi_i,posi_j+1) %% dir 1
+[m,n]=size(terrain);
+singlecell_acc=zeros(m,n);
+singlecell_acc(point.i,point.j)=point.wq;
+sequence=[];
+sequence=push(sequence,point);
+while(~isempty(sequence))  %%判断数组队列是否为空
+    [sequence,popValue]=pop(sequence);
+    %%判断条件point.i,point.j 的位置 边界时无法取block 水流量阈值
+    if popValue.i<2||popValue.j<2||popValue.wq<0.0001||popValue.i>499||popValue.j>499
+        continue
+    end
+
+    dem_block=terrain(popValue.i-1:popValue.i+1,popValue.j-1:popValue.j+1);
+    p=1.5; %%p 权重系数可以自己设定
+    [distribution]=mfd_fg(dem_block,p,popValue.wq);
+    %%记录方向
+    for x=-1:1
+        for y=-1:1
+           if terrain(popValue.i,popValue.j)>terrain(popValue.i+x,popValue.j+y)&&distribution(x+2,y+2)>0.1  %%将进栈阈值wq<0.0001数值条件写到这里
+               point.i=popValue.i+x;point.j=popValue.j+y;point.wq=distribution(x+2,y+2);
+               sequence=push(sequence,point);  %% 出现地势低位置就将其推入栈中,（写成地势低且流量足够，避免多次pop操作）
+           end
+           
+        end
+    end
+    singlecell_acc(popValue.i-1:popValue.i+1,popValue.j-1:popValue.j+1)=singlecell_acc(popValue.i-1:popValue.i+1,popValue.j-1:popValue.j+1)+distribution;
+end
+%% mdf-fg  algorithm  dem_block 是八邻域栅格 3x3
+function [distribution]=mfd_fg(dem_block,p,wq)
+%% dem_block （3,3） p公式的系数 1.1~10 p数值大时接近D8  wq 中心位置的水量 ;
+distribution=[0 0 0;0 0 0;0 0 0];
+dh=zeros(3,3);
+%%计算高差
+for i=1:3
+    for j=1:3
+        if dem_block(i,j)<dem_block(2,2)
+            dh(i,j)=dem_block(i,j)-dem_block(2,2);
+        end
+    end
+end
+while(sum(sum(dh))) %%while(0)则不会进行 即中心元素高于周围则不向外流
+    %%获得tanβi
+    b=zeros(3,3);
+    for i=1:3
+        for j=1:3
+            if(i==2||j==2)
+                b(i,j)=dh(i,j)/30;
+            else
+                b(i,j)=dh(i,j)/(30*sqrt(2));
+            end
+        end
+    end
+    %%计算流量分配
+    sweight=0;
+    for i=1:3
+        for j=1:3
+            if (i==2||j==2)
+                sweight=sweight+power(b(i,j),p)*0.5;
+            else
+                sweight=sweight+power(b(i,j),p)*sqrt(2)/4;
+            end
+        end
+    end
+    for i=1:3
+        for j=1:3
+            if(i==2||j==2)
+                distribution(i,j)=wq*power(b(i,j),p)*0.5/sweight;
+            else
+                distribution(i,j)=wq*(power(b(i,j),p)*sqrt(2)/4)/sweight;
+            end
+        end
+    end
+    break;
+end
+%% 由于matlab的熟练程度有限  为了优化计算  将递归化作迭代过程 引入队列queue
+%%queue的 push pop的进出队列操作
+%% sequeue 是traversal 的节点point 
+function sequence=push(sequence,point)
+    if isempty(sequence)
+        sequence=[sequence(:,:),point.i;sequence(:,:),point.j;sequence(:,:),point.wq];
+    else
+        sequence=[sequence(1,:),point.i;sequence(2,:),point.j;sequence(3,:),point.wq];
+    end
+end
+%%FIFO
+function [sequence,popValue]=pop(sequence)
+    [~,m]=size(sequence);
+    popValue.i=sequence(1,1);
+    popValue.j=sequence(2,1);
+    popValue.wq=sequence(3,1);
+    sequence=sequence(:,2:m);%%需要优化 否则复杂度大 时间长
+end
+
